@@ -1,0 +1,4 @@
+# Add whitelisted package names, one per line
+# Example:
+# com.example.app
+# com.another.app

@@ -1,0 +1,6 @@
+id=hyperos_sf_bypass
+name=HyperOS SF Bypass
+version=v1.0
+versionCode=1
+author=Anonymous
+description= bypasses screenshot restrictions on Xiaomi HyperOS by hooking surfaceflinger

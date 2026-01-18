@@ -1,0 +1,70 @@
+name: Build Zygisk Module
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Android NDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: Install Android NDK
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y unzip
+        wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip android-ndk-r25c-linux.zip
+        echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+        echo "$PWD/android-ndk-r25c" >> $GITHUB_PATH
+
+    - name: Build module
+      run: |
+        cd jni
+        $NDK_ROOT/ndk-build APP_ABI="arm64-v8a" NDK_PROJECT_PATH=. NDK_APPLICATION_MK=./Android.mk
+        cd ..
+
+    - name: Package module
+      run: |
+        mkdir -p HyperOS_SF_Bypass/lib/arm64-v8a
+        cp jni/libs/arm64-v8a/liblsfbypass.so HyperOS_SF_Bypass/lib/arm64-v8a/
+        cp zygisk_next.xml HyperOS_SF_Bypass/
+        cp module.prop HyperOS_SF_Bypass/
+        cp sepolicy.rule HyperOS_SF_Bypass/
+        cp service.sh HyperOS_SF_Bypass/
+        cp whitelist.txt HyperOS_SF_Bypass/
+
+        # Create zip
+        cd HyperOS_SF_Bypass
+        zip -r ../HyperOS_SF_Bypass_v${GITHUB_REF##*/}.zip .
+
+    - name: Create Release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        body: Release build for HyperOS SF Bypass module
+        draft: false
+        prerelease: false
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: https://uploads.github.com/repos/${{ github.repository }}/releases/${{ steps.create_release.outputs.id }}/assets
+        asset_path: HyperOS_SF_Bypass_v${{ github.ref ##*/ }.zip
+        asset_name: HyperOS_SF_Bypass_v${{ github.ref ##*/ }.zip
+        asset_content_type: application/zip
