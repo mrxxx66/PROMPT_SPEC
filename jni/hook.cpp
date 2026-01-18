@@ -1,7 +1,7 @@
 #include <dlfcn.h>
 #include <unistd.h>
 #include <android/log.h>
-// #include <dobby.h>
+#include <dobby.h>
 #include <unordered_map>
 #include <shared_mutex>
 #include <fstream>
