@@ -1,0 +1,44 @@
+{
+  "auto_fix_system": {
+    "enabled": true,
+    "max_retry_attempts": 3,
+    "monitor_build_failures": true,
+    "ai_analysis_enabled": true
+  },
+  "build_tools": {
+    "ndk_required": true,
+    "check_ndk_path": true,
+    "dobby_required": true,
+    "compile_dobby_if_missing": true
+  },
+  "ai_configuration": {
+    "provider": "shengsuan",
+    "api_key_env": "SHENGSUAN_API_KEY",
+    "api_url_env": "SHENGSUAN_API_URL",
+    "model_env": "SHENGSUAN_MODEL",
+    "default_api_url": "https://api.shengsuan.cloud/v1/chat/completions",
+    "default_model": "deepseek/deepseek-v3.2"
+  },
+  "common_fixes": [
+    {
+      "error_pattern": "libdobby.a: No such file or directory",
+      "fix_action": "download_and_compile_dobby",
+      "description": "Dobby库缺失，需要下载并编译"
+    },
+    {
+      "error_pattern": "ANDROID_NDK_HOME.*not set",
+      "fix_action": "check_ndk_installation",
+      "description": "NDK路径未配置"
+    },
+    {
+      "error_pattern": "armeabi-v7a",
+      "fix_action": "verify_architecture_support",
+      "description": "架构相关错误"
+    }
+  ],
+  "build_trigger": {
+    "local_build_verification": true,
+    "remote_build_tag_prefix": "v1.0.1-fix.",
+    "skip_ci_flag": "[skip ci]"
+  }
+}
