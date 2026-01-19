@@ -1,0 +1,173 @@
+warning: in the working copy of '.github/workflows/auto-fix-build-error.yml', LF will be replaced by CRLF the next time Git touches it
+[1mdiff --git a/.github/workflows/auto-fix-build-error.yml b/.github/workflows/auto-fix-build-error.yml[m
+[1mindex 0f31b89..cc55134 100644[m
+[1m--- a/.github/workflows/auto-fix-build-error.yml[m
+[1m+++ b/.github/workflows/auto-fix-build-error.yml[m
+[36m@@ -75,7 +75,7 @@[m [mjobs:[m
+           try {[m
+             // Prepare the request payload for Shengsuan Cloud API[m
+             const payload = {[m
+[31m-              model: process.env.SHENGSUAN_MODEL || 'shengsuan-model',[m
+[32m+[m[32m              model: process.env.SHENGSUAN_MODEL || 'deepseek/deepseek-v3.2',[m
+               messages: [[m
+                 {[m
+                   role: "user",[m
+[36m@@ -166,6 +166,33 @@[m [mjobs:[m
+           echo "No fix_data.json file found"[m
+         fi[m
+ [m
+[32m+[m[32m    - name: Commit and push fixes[m
+[32m+[m[32m      run: |[m
+[32m+[m[32m        # Configure git[m
+[32m+[m[32m        git config --local user.email "action@github.com"[m
+[32m+[m[32m        git config --local user.name "GitHub Action"[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Check if there are any changes to commit[m
+[32m+[m[32m        if ! git diff --cached --quiet; then[m
+[32m+[m[32m          git commit -m "Auto-fix: Apply build error fixes [skip ci]"[m
+[32m+[m[32m        fi[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Check for unstaged changes[m
+[32m+[m[32m        if ! git diff --quiet; then[m
+[32m+[m[32m          git add .[m
+[32m+[m[32m          git commit -m "Auto-fix: Apply build error fixes [skip ci]"[m
+[32m+[m[32m        fi[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Push changes to the branch[m
+[32m+[m[32m        if ! git diff HEAD..origin/${{ github.event.workflow_run.head_branch || github.ref_name }} --quiet; then[m
+[32m+[m[32m          git push origin HEAD:${{ github.event.workflow_run.head_branch || github.ref_name }}[m
+[32m+[m[32m          echo "Changes pushed to the branch"[m
+[32m+[m[32m        else[m
+[32m+[m[32m          echo "No changes to push"[m
+[32m+[m[32m        fi[m
+[32m+[m[32m      env:[m
+[32m+[m[32m        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}[m
+[32m+[m
+     - name: Create issue if fix fails[m
+       uses: actions/github-script@v7[m
+       if: ${{ failure() }}[m
+[36m@@ -183,117 +210,115 @@[m [mjobs:[m
+             labels: ['bug', 'auto-fix-failed', 'build'][m
+           });[m
+ [m
+[31m-    # This job reuses the build logic from build.yml[m
+[31m-    build_after_fix:[m
+[31m-      needs: auto_fix[m
+[31m-      runs-on: ubuntu-latest[m
+[31m-      [m
+[31m-      steps:[m
+[31m-      - name: Checkout code[m
+[31m-        uses: actions/checkout@v4[m
+[32m+[m[32m  build_after_fix:[m
+[32m+[m[32m    needs: auto_fix[m
+[32m+[m[32m    runs-on: ubuntu-latest[m
+[32m+[m[41m    [m
+[32m+[m[32m    steps:[m
+[32m+[m[32m    - name: Checkout code[m
+[32m+[m[32m      uses: actions/checkout@v4[m
+ [m
+[31m-      - name: Setup Android NDK[m
+[31m-        uses: actions/setup-java@v4[m
+[31m-        with:[m
+[31m-          distribution: 'temurin'[m
+[31m-          java-version: '17'[m
+[32m+[m[32m    - name: Setup Android NDK[m
+[32m+[m[32m      uses: actions/setup-java@v4[m
+[32m+[m[32m      with:[m
+[32m+[m[32m        distribution: 'temurin'[m
+[32m+[m[32m        java-version: '17'[m
+ [m
+[31m-      - name: Install Android NDK and build tools[m
+[31m-        run: |[m
+[31m-          sudo apt-get update[m
+[31m-          sudo apt-get install -y unzip cmake ninja-build[m
+[31m-          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip[m
+[31m-          unzip android-ndk-r25c-linux.zip[m
+[31m-          echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV[m
+[31m-          echo "$PWD/android-ndk-r25c" >> $GITHUB_PATH[m
+[32m+[m[32m    - name: Install Android NDK and build tools[m
+[32m+[m[32m      run: |[m
+[32m+[m[32m        sudo apt-get update[m
+[32m+[m[32m        sudo apt-get install -y unzip cmake ninja-build[m
+[32m+[m[32m        wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip[m
+[32m+[m[32m        unzip android-ndk-r25c-linux.zip[m
+[32m+[m[32m        echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV[m
+[32m+[m[32m        echo "$PWD/android-ndk-r25c" >> $GITHUB_PATH[m
+ [m
+[31m-      - name: Build Dobby library[m
+[31m-        run: |[m
+[31m-          mkdir -p jni/external[m
+[31m-          cd jni/external[m
+[31m-          echo "Cloning Dobby repository..."[m
+[31m-          git clone --depth 1 https://github.com/jmpews/Dobby.git dobby-src[m
+[31m-          cd dobby-src[m
+[32m+[m[32m    - name: Build Dobby library[m
+[32m+[m[32m      run: |[m
+[32m+[m[32m        mkdir -p jni/external[m
+[32m+[m[32m        cd jni/external[m
+[32m+[m[32m        echo "Cloning Dobby repository..."[m
+[32m+[m[32m        git clone --depth 1 https://github.com/jmpews/Dobby.git dobby-src[m
+[32m+[m[32m        cd dobby-src[m
+ [m
+[31m-          echo "Building Dobby for Android arm64..."[m
+[31m-          # Build Dobby using the NDK[m
+[31m-          mkdir -p build && cd build[m
+[31m-          cmake .. \[m
+[31m-            -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake \[m
+[31m-            -DANDROID_ABI=arm64-v8a \[m
+[31m-            -DANDROID_PLATFORM=android-33 \[m
+[31m-            -DCMAKE_BUILD_TYPE=Release \[m
+[31m-            -DBUILD_SHARED_LIBS=OFF[m
+[32m+[m[32m        echo "Building Dobby for Android arm64..."[m
+[32m+[m[32m        # Build Dobby using the NDK[m
+[32m+[m[32m        mkdir -p build && cd build[m
+[32m+[m[32m        cmake .. \[m
+[32m+[m[32m          -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake \[m
+[32m+[m[32m          -DANDROID_ABI=arm64-v8a \[m
+[32m+[m[32m          -DANDROID_PLATFORM=android-33 \[m
+[32m+[m[32m          -DCMAKE_BUILD_TYPE=Release \[m
+[32m+[m[32m          -DBUILD_SHARED_LIBS=OFF[m
+ [m
+[31m-          make -j$(nproc)[m
+[32m+[m[32m        make -j$(nproc)[m
+ [m
+[31m-          # Copy the built library[m
+[31m-          cp libdobby.a ../../[m
+[31m-          cd ../..[m
+[31m-          rm -rf dobby-src[m
+[31m-          echo "Dobby library built successfully at jni/external/libdobby.a"[m
+[32m+[m[32m        # Copy the built library[m
+[32m+[m[32m        cp libdobby.a ../../[m
+[32m+[m[32m        cd ../..[m
+[32m+[m[32m        rm -rf dobby-src[m
+[32m+[m[32m        echo "Dobby library built successfully at jni/external/libdobby.a"[m
+ [m
+[31m-      - name: Build module[m
+[31m-        run: |[m
+[31m-          cd jni[m
+[31m-          $NDK_ROOT/ndk-build APP_ABI="arm64-v8a"[m
+[31m-          cd ..[m
+[32m+[m[32m    - name: Build module[m
+[32m+[m[32m      run: |[m
+[32m+[m[32m        cd jni[m
+[32m+[m[32m        $NDK_ROOT/ndk-build APP_ABI="arm64-v8a"[m
+[32m+[m[32m        cd ..[m
+ [m
+[31m-      - name: Package module[m
+[31m-        run: |[m
+[31m-          mkdir -p HyperOS_SF_Bypass/lib/arm64-v8a[m
+[31m-          cp jni/libs/arm64-v8a/liblsfbypass.so HyperOS_SF_Bypass/lib/arm64-v8a/[m
+[31m-          cp zygisk_next.xml HyperOS_SF_Bypass/[m
+[31m-          cp module.prop HyperOS_SF_Bypass/[m
+[31m-          cp sepolicy.rule HyperOS_SF_Bypass/[m
+[31m-          cp service.sh HyperOS_SF_Bypass/[m
+[31m-          cp whitelist.txt HyperOS_SF_Bypass/[m
+[32m+[m[32m    - name: Package module[m
+[32m+[m[32m      run: |[m
+[32m+[m[32m        mkdir -p HyperOS_SF_Bypass/lib/arm64-v8a[m
+[32m+[m[32m        cp jni/libs/arm64-v8a/liblsfbypass.so HyperOS_SF_Bypass/lib/arm64-v8a/[m
+[32m+[m[32m        cp zygisk_next.xml HyperOS_SF_Bypass/[m
+[32m+[m[32m        cp module.prop HyperOS_SF_Bypass/[m
+[32m+[m[32m        cp sepolicy.rule HyperOS_SF_Bypass/[m
+[32m+[m[32m        cp service.sh HyperOS_SF_Bypass/[m
+[32m+[m[32m        cp whitelist.txt HyperOS_SF_By

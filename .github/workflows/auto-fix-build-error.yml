@@ -75,7 +75,7 @@ jobs:
           try {
             // Prepare the request payload for Shengsuan Cloud API
             const payload = {
-              model: process.env.SHENGSUAN_MODEL || 'shengsuan-model',
+              model: process.env.SHENGSUAN_MODEL || 'deepseek/deepseek-v3.2',
               messages: [
                 {
                   role: "user",
@@ -166,6 +166,33 @@ jobs:
           echo "No fix_data.json file found"
         fi
 
+    - name: Commit and push fixes
+      run: |
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Check if there are any changes to commit
+        if ! git diff --cached --quiet; then
+          git commit -m "Auto-fix: Apply build error fixes [skip ci]"
+        fi
+        
+        # Check for unstaged changes
+        if ! git diff --quiet; then
+          git add .
+          git commit -m "Auto-fix: Apply build error fixes [skip ci]"
+        fi
+        
+        # Push changes to the branch
+        if ! git diff HEAD..origin/${{ github.event.workflow_run.head_branch || github.ref_name }} --quiet; then
+          git push origin HEAD:${{ github.event.workflow_run.head_branch || github.ref_name }}
+          echo "Changes pushed to the branch"
+        else
+          echo "No changes to push"
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
     - name: Create issue if fix fails
       uses: actions/github-script@v7
       if: ${{ failure() }}
@@ -183,117 +210,115 @@ jobs:
             labels: ['bug', 'auto-fix-failed', 'build']
           });
 
-    # This job reuses the build logic from build.yml
-    build_after_fix:
-      needs: auto_fix
-      runs-on: ubuntu-latest
-      
-      steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+  build_after_fix:
+    needs: auto_fix
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
 
-      - name: Setup Android NDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+    - name: Setup Android NDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
 
-      - name: Install Android NDK and build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip cmake ninja-build
-          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
-          unzip android-ndk-r25c-linux.zip
-          echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
-          echo "$PWD/android-ndk-r25c" >> $GITHUB_PATH
+    - name: Install Android NDK and build tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y unzip cmake ninja-build
+        wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+        unzip android-ndk-r25c-linux.zip
+        echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+        echo "$PWD/android-ndk-r25c" >> $GITHUB_PATH
 
-      - name: Build Dobby library
-        run: |
-          mkdir -p jni/external
-          cd jni/external
-          echo "Cloning Dobby repository..."
-          git clone --depth 1 https://github.com/jmpews/Dobby.git dobby-src
-          cd dobby-src
+    - name: Build Dobby library
+      run: |
+        mkdir -p jni/external
+        cd jni/external
+        echo "Cloning Dobby repository..."
+        git clone --depth 1 https://github.com/jmpews/Dobby.git dobby-src
+        cd dobby-src
 
-          echo "Building Dobby for Android arm64..."
-          # Build Dobby using the NDK
-          mkdir -p build && cd build
-          cmake .. \
-            -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-33 \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DBUILD_SHARED_LIBS=OFF
+        echo "Building Dobby for Android arm64..."
+        # Build Dobby using the NDK
+        mkdir -p build && cd build
+        cmake .. \
+          -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-33 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=OFF
 
-          make -j$(nproc)
+        make -j$(nproc)
 
-          # Copy the built library
-          cp libdobby.a ../../
-          cd ../..
-          rm -rf dobby-src
-          echo "Dobby library built successfully at jni/external/libdobby.a"
+        # Copy the built library
+        cp libdobby.a ../../
+        cd ../..
+        rm -rf dobby-src
+        echo "Dobby library built successfully at jni/external/libdobby.a"
 
-      - name: Build module
-        run: |
-          cd jni
-          $NDK_ROOT/ndk-build APP_ABI="arm64-v8a"
-          cd ..
+    - name: Build module
+      run: |
+        cd jni
+        $NDK_ROOT/ndk-build APP_ABI="arm64-v8a"
+        cd ..
 
-      - name: Package module
-        run: |
-          mkdir -p HyperOS_SF_Bypass/lib/arm64-v8a
-          cp jni/libs/arm64-v8a/liblsfbypass.so HyperOS_SF_Bypass/lib/arm64-v8a/
-          cp zygisk_next.xml HyperOS_SF_Bypass/
-          cp module.prop HyperOS_SF_Bypass/
-          cp sepolicy.rule HyperOS_SF_Bypass/
-          cp service.sh HyperOS_SF_Bypass/
-          cp whitelist.txt HyperOS_SF_Bypass/
+    - name: Package module
+      run: |
+        mkdir -p HyperOS_SF_Bypass/lib/arm64-v8a
+        cp jni/libs/arm64-v8a/liblsfbypass.so HyperOS_SF_Bypass/lib/arm64-v8a/
+        cp zygisk_next.xml HyperOS_SF_Bypass/
+        cp module.prop HyperOS_SF_Bypass/
+        cp sepolicy.rule HyperOS_SF_Bypass/
+        cp service.sh HyperOS_SF_Bypass/
+        cp whitelist.txt HyperOS_SF_Bypass/
 
-          # Create zip
-          cd HyperOS_SF_Bypass
-          zip -r ../HyperOS_SF_Bypass_fixed_build_${{ github.run_number }}.zip .
+        # Create zip
+        cd HyperOS_SF_Bypass
+        zip -r ../HyperOS_SF_Bypass_fixed_build_${{ github.run_number }}.zip .
 
-      - name: Upload fixed build artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: fixed-build-artifact
-          path: HyperOS_SF_Bypass_fixed_build_${{ github.run_number }}.zip
+    - name: Upload fixed build artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: fixed-build-artifact
+        path: HyperOS_SF_Bypass_fixed_build_${{ github.run_number }}.zip
 
-    # Trigger rebuild by creating tag (this job runs in parallel to build_after_fix)
-    trigger_rebuild_with_tag:
-      needs: auto_fix
-      runs-on: ubuntu-latest
-      
-      steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+  trigger_rebuild_with_tag:
+    needs: auto_fix
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.workflow_run.head_branch || github.ref }}
 
-      - name: Create and push tag to trigger build workflow
-        run: |
-          # Configure git
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
-          
-          # Get the latest tag to increment
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
-          if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
-              MAJOR=${BASH_REMATCH[1]}
-              MINOR=${BASH_REMATCH[2]}
-              PATCH=${BASH_REMATCH[3]}
-              NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))-fix.${GITHUB_RUN_NUMBER}"
-          else
-              # If no valid tag found, start from v0.0.1
-              NEW_TAG="v0.0.1-fix.${GITHUB_RUN_NUMBER}"
-          fi
-          
-          echo "Creating new tag: $NEW_TAG"
-          
-          # Create and push tag to trigger build workflow
-          git tag "$NEW_TAG"
-          git push origin "$NEW_TAG"
-          
-          echo "New tag $NEW_TAG pushed to trigger build workflow"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    - name: Create and push tag to trigger build workflow
+      run: |
+        # Configure git
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        
+        # Get the latest tag to increment
+        LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            MAJOR=${BASH_REMATCH[1]}
+            MINOR=${BASH_REMATCH[2]}
+            PATCH=${BASH_REMATCH[3]}
+            NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))-fix.${GITHUB_RUN_NUMBER}"
+        else
+            # If no valid tag found, start from v0.0.1
+            NEW_TAG="v0.0.1-fix.${GITHUB_RUN_NUMBER}"
+        fi
+        
+        echo "Creating new tag: $NEW_TAG"
+        
+        # Create and push tag to trigger build workflow
+        git tag "$NEW_TAG"
+        git push origin "$NEW_TAG"
+        
+        echo "New tag $NEW_TAG pushed to trigger build workflow"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
