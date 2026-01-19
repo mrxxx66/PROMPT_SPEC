@@ -1,0 +1,292 @@
+name: Auto Fix Build Errors
+
+on:
+  workflow_run:
+    workflows: ["Build Zygisk Module"]
+    types:
+      - completed
+
+jobs:
+  auto_fix:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Download artifacts
+      uses: dawidd6/action-download-artifact@v2
+      with:
+        workflow: ${{ github.event.workflow_run.name }}
+        run_id: ${{ github.event.workflow_run.id }}
+
+    - name: Get build logs
+      id: get_logs
+      run: |
+        # Find the log file containing build errors
+        if [ -f "build.log" ]; then
+            LOG_FILE="build.log"
+        elif [ -f "build_error.log" ]; then
+            LOG_FILE="build_error.log"
+        else
+            # Try to find any log file
+            LOG_FILE=$(find . -name "*.log" -type f | head -n 1)
+        fi
+        
+        if [ -n "$LOG_FILE" ]; then
+            echo "BUILD_LOG_CONTENT<<EOF" >> $GITHUB_ENV
+            cat "$LOG_FILE" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+        else
+            # Use workflow run logs as fallback
+            echo "BUILD_LOG_CONTENT<<EOF" >> $GITHUB_ENV
+            echo "No specific build log found, using workflow run info:" >> $GITHUB_ENV
+            echo "Workflow: ${{ github.event.workflow_run.name }}" >> $GITHUB_ENV
+            echo "Run ID: ${{ github.event.workflow_run.id }}" >> $GITHUB_ENV
+            echo "Conclusion: ${{ github.event.workflow_run.conclusion }}" >> $GITHUB_ENV
+            echo "Head Branch: ${{ github.event.workflow_run.head_branch }}" >> $GITHUB_ENV
+            echo "Head SHA: ${{ github.event.workflow_run.head_sha }}" >> $GITHUB_ENV
+            echo "EOF" >> $GITHUB_ENV
+        fi
+
+    - name: Prepare fix request
+      id: prepare
+      run: |
+        BUILD_ERROR=$(echo "${{ env.BUILD_LOG_CONTENT }}" | grep -A 20 -B 5 "error:" || echo "${{ env.BUILD_LOG_CONTENT }}" | grep -A 20 -B 5 "Error" || echo "${{ env.BUILD_LOG_CONTENT }}" | tail -50)
+        
+        FIX_PROMPT="Analyze the following build error and provide a fix. Respond with a JSON object containing 'analysis' (your explanation of the issue) and 'fixes' (an array of commands or code changes to resolve the issue):
+        {
+          \"analysis\": \"\",
+          \"fixes\": [\"\"]
+        }
+        
+        Build Error:
+        $BUILD_ERROR"
+        
+        echo "FIX_PROMPT<<EOF" >> $GITHUB_ENV
+        echo "$FIX_PROMPT" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+
+    - name: Call DeepSeek API
+      id: deepseek
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const { Configuration, OpenAIApi } = require("openai");
+          
+          const configuration = new Configuration({
+            apiKey: process.env.DEEPSEEK_API_KEY,
+            basePath: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'  // Use configurable base URL
+          });
+          
+          const openai = new OpenAIApi(configuration);
+          
+          try {
+            const response = await openai.createChatCompletion({
+              model: process.env.DEEPSEEK_MODEL || 'deepseek-chat', // Allow configurable model
+              messages: [
+                {
+                  role: "user",
+                  content: `${process.env.FIX_PROMPT}`
+                }
+              ],
+              temperature: 0.2,
+            });
+            
+            const ai_response = response.data.choices[0].message.content;
+            console.log("AI Response:", ai_response);
+            
+            // Extract JSON from response
+            const jsonStart = ai_response.indexOf('{');
+            const jsonEnd = ai_response.lastIndexOf('}') + 1;
+            let fixData;
+            
+            if (jsonStart !== -1 && jsonEnd !== -1) {
+              fixData = JSON.parse(ai_response.substring(jsonStart, jsonEnd));
+            } else {
+              // If no JSON found, treat whole response as analysis
+              fixData = {
+                analysis: ai_response,
+                fixes: []
+              };
+            }
+            
+            // Write fix data to file for next step
+            require('fs').writeFileSync('fix_data.json', JSON.stringify(fixData));
+            
+            core.setOutput('analysis', fixData.analysis);
+            core.setOutput('fixes', JSON.stringify(fixData.fixes));
+          } catch (error) {
+            console.error("Error calling DeepSeek API:", error);
+            // Fallback: create a basic fix_data.json
+            const fallbackFix = {
+              analysis: "Could not connect to AI API. Please manually review the build logs.",
+              fixes: []
+            };
+            require('fs').writeFileSync('fix_data.json', JSON.stringify(fallbackFix));
+            core.setOutput('analysis', fallbackFix.analysis);
+            core.setOutput('fixes', JSON.stringify(fallbackFix.fixes));
+          }
+
+    - name: Checkout code for fixing
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+
+    - name: Apply fixes
+      id: apply_fixes
+      run: |
+        if [ -f "fix_data.json" ]; then
+          ANALYSIS=$(jq -r '.analysis' fix_data.json)
+          FIXES=$(jq -r '.fixes[]?' fix_data.json)
+          
+          echo "Analysis: $ANALYSIS"
+          echo "Applying fixes:"
+          
+          # Loop through each fix and attempt to apply it
+          while IFS= read -r fix; do
+            if [ -n "$fix" ] && [ "$fix" != "null" ]; then
+              echo "Attempting fix: $fix"
+              
+              # Execute the fix command in a subshell to prevent exit on error
+              (
+                eval "$fix"
+              ) || {
+                echo "Warning: Fix failed - $fix"
+              }
+            fi
+          done <<< "$(echo "$FIXES" | jq -c '.[]')"
+        else
+          echo "No fix_data.json file found"
+        fi
+
+    - name: Create issue if fix fails
+      uses: actions/github-script@v7
+      if: ${{ failure() }}
+      with:
+        script: |
+          const fs = require('fs');
+          const logContent = process.env.BUILD_LOG_CONTENT || 'Log content unavailable';
+          const analysis = process.env.ANALYSIS || 'Analysis unavailable';
+          
+          await github.rest.issues.create({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            title: `Build Error Auto-Fix Failed - Run ${context.runNumber}`,
+            body: `Auto-fix attempt failed for workflow run.\n\nOriginal Error:\n${logContent}\n\nAI Analysis:\n${analysis}\n\nWorkflow Run: ${process.env.WORKFLOW_RUN_URL}`,
+            labels: ['bug', 'auto-fix-failed', 'build']
+          });
+
+    # This job reuses the build logic from build.yml
+    build_after_fix:
+      needs: auto_fix
+      runs-on: ubuntu-latest
+      
+      steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Android NDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install Android NDK and build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip cmake ninja-build
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip
+          echo "NDK_ROOT=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+          echo "$PWD/android-ndk-r25c" >> $GITHUB_PATH
+
+      - name: Build Dobby library
+        run: |
+          mkdir -p jni/external
+          cd jni/external
+          echo "Cloning Dobby repository..."
+          git clone --depth 1 https://github.com/jmpews/Dobby.git dobby-src
+          cd dobby-src
+
+          echo "Building Dobby for Android arm64..."
+          # Build Dobby using the NDK
+          mkdir -p build && cd build
+          cmake .. \
+            -DCMAKE_TOOLCHAIN_FILE=$NDK_ROOT/build/cmake/android.toolchain.cmake \
+            -DANDROID_ABI=arm64-v8a \
+            -DANDROID_PLATFORM=android-33 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=OFF
+
+          make -j$(nproc)
+
+          # Copy the built library
+          cp libdobby.a ../../
+          cd ../..
+          rm -rf dobby-src
+          echo "Dobby library built successfully at jni/external/libdobby.a"
+
+      - name: Build module
+        run: |
+          cd jni
+          $NDK_ROOT/ndk-build APP_ABI="arm64-v8a"
+          cd ..
+
+      - name: Package module
+        run: |
+          mkdir -p HyperOS_SF_Bypass/lib/arm64-v8a
+          cp jni/libs/arm64-v8a/liblsfbypass.so HyperOS_SF_Bypass/lib/arm64-v8a/
+          cp zygisk_next.xml HyperOS_SF_Bypass/
+          cp module.prop HyperOS_SF_Bypass/
+          cp sepolicy.rule HyperOS_SF_Bypass/
+          cp service.sh HyperOS_SF_Bypass/
+          cp whitelist.txt HyperOS_SF_Bypass/
+
+          # Create zip
+          cd HyperOS_SF_Bypass
+          zip -r ../HyperOS_SF_Bypass_fixed_build_${{ github.run_number }}.zip .
+
+      - name: Upload fixed build artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: fixed-build-artifact
+          path: HyperOS_SF_Bypass_fixed_build_${{ github.run_number }}.zip
+
+    # Trigger rebuild by creating tag (this job runs in parallel to build_after_fix)
+    trigger_rebuild_with_tag:
+      needs: auto_fix
+      runs-on: ubuntu-latest
+      
+      steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch || github.ref }}
+
+      - name: Create and push tag to trigger build workflow
+        run: |
+          # Configure git
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Get the latest tag to increment
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+              MAJOR=${BASH_REMATCH[1]}
+              MINOR=${BASH_REMATCH[2]}
+              PATCH=${BASH_REMATCH[3]}
+              NEW_TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))-fix.${GITHUB_RUN_NUMBER}"
+          else
+              # If no valid tag found, start from v0.0.1
+              NEW_TAG="v0.0.1-fix.${GITHUB_RUN_NUMBER}"
+          fi
+          
+          echo "Creating new tag: $NEW_TAG"
+          
+          # Create and push tag to trigger build workflow
+          git tag "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          
+          echo "New tag $NEW_TAG pushed to trigger build workflow"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
