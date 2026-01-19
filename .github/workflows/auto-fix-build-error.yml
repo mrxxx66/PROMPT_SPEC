@@ -65,23 +65,17 @@ jobs:
         echo "$FIX_PROMPT" >> $GITHUB_ENV
         echo "EOF" >> $GITHUB_ENV
 
-    - name: Call DeepSeek API
-      id: deepseek
+    - name: Call Shengsuan Cloud API
+      id: shengsuan
       uses: actions/github-script@v7
       with:
         script: |
-          const { Configuration, OpenAIApi } = require("openai");
-          
-          const configuration = new Configuration({
-            apiKey: process.env.DEEPSEEK_API_KEY,
-            basePath: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com'  // Use configurable base URL
-          });
-          
-          const openai = new OpenAIApi(configuration);
-          
+          const axios = require('axios');
+
           try {
-            const response = await openai.createChatCompletion({
-              model: process.env.DEEPSEEK_MODEL || 'deepseek-chat', // Allow configurable model
+            // Prepare the request payload for Shengsuan Cloud API
+            const payload = {
+              model: process.env.SHENGSUAN_MODEL || 'shengsuan-model',
               messages: [
                 {
                   role: "user",
@@ -89,16 +83,29 @@ jobs:
                 }
               ],
               temperature: 0.2,
-            });
-            
+              stream: false
+            };
+
+            // Make the API call to Shengsuan Cloud
+            const response = await axios.post(
+              process.env.SHENGSUAN_API_URL || 'https://api.shengsuan.cloud/v1/chat/completions',
+              payload,
+              {
+                headers: {
+                  'Authorization': `Bearer ${process.env.SHENGSUAN_API_KEY}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+
             const ai_response = response.data.choices[0].message.content;
-            console.log("AI Response:", ai_response);
-            
+            console.log("Shengsuan Cloud Response:", ai_response);
+
             // Extract JSON from response
             const jsonStart = ai_response.indexOf('{');
             const jsonEnd = ai_response.lastIndexOf('}') + 1;
             let fixData;
-            
+
             if (jsonStart !== -1 && jsonEnd !== -1) {
               fixData = JSON.parse(ai_response.substring(jsonStart, jsonEnd));
             } else {
@@ -108,17 +115,17 @@ jobs:
                 fixes: []
               };
             }
-            
+
             // Write fix data to file for next step
             require('fs').writeFileSync('fix_data.json', JSON.stringify(fixData));
-            
+
             core.setOutput('analysis', fixData.analysis);
             core.setOutput('fixes', JSON.stringify(fixData.fixes));
           } catch (error) {
-            console.error("Error calling DeepSeek API:", error);
+            console.error("Error calling Shengsuan Cloud API:", error.message);
             // Fallback: create a basic fix_data.json
             const fallbackFix = {
-              analysis: "Could not connect to AI API. Please manually review the build logs.",
+              analysis: "Could not connect to Shengsuan Cloud API. Please manually review the build logs.",
               fixes: []
             };
             require('fs').writeFileSync('fix_data.json', JSON.stringify(fallbackFix));
